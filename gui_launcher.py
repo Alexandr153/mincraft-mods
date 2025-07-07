@@ -72,6 +72,7 @@ class MinecraftLauncher:
         self.filter_success = None
         self.filter_warning = None
         self.filter_error = None
+        self.tlauncher_settings_entry = None
 
         # Инициализация
         self.load_config()
@@ -495,35 +496,36 @@ class MinecraftLauncher:
         self.log_info("Логи очищены")  # Добавляем служебную запись
 
     def all_paths_configured(self):
-        """Проверка, что все пути настроены"""
+        """Проверка, что все ОБЯЗАТЕЛЬНЫЕ пути настроены"""
+        # Теперь проверяем папку Minecraft
         return (self.minecraft_path.get() and
-                self.tlauncher_path.get() and
                 os.path.exists(self.minecraft_path.get()) and
-                os.path.exists(self.tlauncher_path.get()))
+                os.path.isdir(self.minecraft_path.get()))  # Добавляем проверку на папку
 
     def update_path_info(self):
         """Обновление информации о путях"""
-        minecraft_status = "✅" if self.minecraft_path.get() and os.path.exists(self.minecraft_path.get()) else "❌"
-        tlauncher_status = "✅" if self.tlauncher_path.get() and os.path.exists(self.tlauncher_path.get()) else "❌"
+        minecraft_status = "✅" if (self.minecraft_path.get() and
+                                   os.path.exists(self.minecraft_path.get()) and
+                                   os.path.isdir(self.minecraft_path.get())) else "❌"
+        tlauncher_status = "✅" if self.tlauncher_path.get() and os.path.exists(self.tlauncher_path.get()) else "⚪"
         mods_status = "✅" if self.mods_path.get() and os.path.exists(self.mods_path.get()) else "❌"
 
-        info = f"""{minecraft_status} Minecraft:
-    {self.minecraft_path.get()[:40] + '...' if len(self.minecraft_path.get()) > 40 else self.minecraft_path.get() or 'Не настроен'}
+        info = f"""{minecraft_status} Папка Minecraft (обязательно):
+    {self.minecraft_path.get()[:40] + '...' if len(self.minecraft_path.get()) > 40 else self.minecraft_path.get() or 'Не настроена'}
 
-    {tlauncher_status} TLauncher:
-    {self.tlauncher_path.get()[:40] + '...' if len(self.tlauncher_path.get()) > 40 else self.tlauncher_path.get() or 'Не настроен'}
+    {tlauncher_status} TLauncher (опционально):
+    {self.tlauncher_path.get()[:40] + '...' if len(self.tlauncher_path.get()) > 40 else self.tlauncher_path.get() or 'Не указан'}
 
     {mods_status} Моды:
     {self.mods_path.get()[:40] + '...' if len(self.mods_path.get()) > 40 else self.mods_path.get() or 'Не настроен'}"""
 
-        # Используем новый метод вместо прямого обращения
         self.set_text_readonly(self.path_info_text, info)
 
     def show_settings(self):
         """Окно настроек"""
         settings_window = ctk.CTkToplevel(self.root)
         settings_window.title("Настройки путей")
-        settings_window.geometry("600x500")
+        settings_window.geometry("600x600")
         settings_window.transient(self.root)
         settings_window.grab_set()
 
@@ -539,10 +541,21 @@ class MinecraftLauncher:
         main_frame = ctk.CTkFrame(settings_window)
         main_frame.pack(pady=10, padx=20, fill="both", expand=True)
 
-        # Путь к Minecraft
-        minecraft_label = ctk.CTkLabel(main_frame, text="Путь к папке Minecraft:",
-                                       font=ctk.CTkFont(size=14, weight="bold"))
+        # Путь к папке Minecraft (ОБЯЗАТЕЛЬНЫЙ)
+        minecraft_label = ctk.CTkLabel(
+            main_frame,
+            text="Путь к папке Minecraft: *",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
         minecraft_label.pack(anchor="w", padx=20, pady=(20, 5))
+
+        minecraft_hint = ctk.CTkLabel(
+            main_frame,
+            text="Папка с установленным Minecraft (содержит launcher_profiles.json)",
+            font=ctk.CTkFont(size=10),
+            text_color="gray"
+        )
+        minecraft_hint.pack(anchor="w", padx=20, pady=(0, 5))
 
         minecraft_frame = ctk.CTkFrame(main_frame)
         minecraft_frame.pack(padx=20, pady=5, fill="x")
@@ -558,20 +571,32 @@ class MinecraftLauncher:
             minecraft_frame,
             text="📁",
             width=50,
-            command=lambda: self.browse_folder(self.minecraft_settings_entry, "Выберите папку Minecraft")
+            command=lambda: self.browse_minecraft_folder(self.minecraft_settings_entry)
         )
         minecraft_browse_btn.pack(side="right", padx=10, pady=10)
 
-        # Путь к TLauncher
-        tlauncher_label = ctk.CTkLabel(main_frame, text="Путь к TLauncher:", font=ctk.CTkFont(size=14, weight="bold"))
+        # Путь к TLauncher (ОПЦИОНАЛЬНЫЙ)
+        tlauncher_label = ctk.CTkLabel(
+            main_frame,
+            text="Путь к TLauncher (опционально):",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
         tlauncher_label.pack(anchor="w", padx=20, pady=(20, 5))
+
+        tlauncher_hint = ctk.CTkLabel(
+            main_frame,
+            text="Если не указан, игра запустится напрямую",
+            font=ctk.CTkFont(size=10),
+            text_color="gray"
+        )
+        tlauncher_hint.pack(anchor="w", padx=20, pady=(0, 5))
 
         tlauncher_frame = ctk.CTkFrame(main_frame)
         tlauncher_frame.pack(padx=20, pady=5, fill="x")
 
         self.tlauncher_settings_entry = ctk.CTkEntry(
             tlauncher_frame,
-            placeholder_text="Выберите TLauncher.jar..."
+            placeholder_text="Выберите TLauncher (необязательно)..."
         )
         self.tlauncher_settings_entry.pack(side="left", fill="x", expand=True, padx=10, pady=10)
         self.tlauncher_settings_entry.insert(0, self.tlauncher_path.get())
@@ -580,14 +605,16 @@ class MinecraftLauncher:
             tlauncher_frame,
             text="📁",
             width=50,
-            command=lambda: self.browse_file(self.tlauncher_settings_entry, "Выберите TLauncher.jar",
-                                             [("JAR files", "*.jar"), ("All files", "*.*")])
+            command=lambda: self.browse_minecraft_file(self.tlauncher_settings_entry)
         )
         tlauncher_browse_btn.pack(side="right", padx=10, pady=10)
 
         # Путь к модам (автоматический)
-        mods_label = ctk.CTkLabel(main_frame, text="Путь к модам (автоматический):",
-                                  font=ctk.CTkFont(size=14, weight="bold"))
+        mods_label = ctk.CTkLabel(
+            main_frame,
+            text="Путь к модам (автоматический):",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
         mods_label.pack(anchor="w", padx=20, pady=(20, 5))
 
         self.mods_info_label = ctk.CTkLabel(
@@ -625,8 +652,9 @@ class MinecraftLauncher:
         minecraft_path = self.minecraft_settings_entry.get().strip()
         tlauncher_path = self.tlauncher_settings_entry.get().strip()
 
-        if not minecraft_path or not tlauncher_path:
-            messagebox.showerror("Ошибка", "Пожалуйста, заполните все поля!")
+        # Проверяем только обязательные поля
+        if not minecraft_path:
+            messagebox.showerror("Ошибка", "Пожалуйста, укажите папку Minecraft!")
             self.settings_btn.configure(fg_color="orange", hover_color="darkorange")
             return
 
@@ -635,28 +663,83 @@ class MinecraftLauncher:
             self.settings_btn.configure(fg_color="orange", hover_color="darkorange")
             return
 
-        if not os.path.exists(tlauncher_path):
-            messagebox.showerror("Ошибка", f"TLauncher не найден: {tlauncher_path}")
+        if not os.path.isdir(minecraft_path):
+            messagebox.showerror("Ошибка", f"Указанный путь не является папкой: {minecraft_path}")
             self.settings_btn.configure(fg_color="orange", hover_color="darkorange")
             return
 
-        # Автоматическое определение пути к модам
+        # TLauncher проверяем только если указан
+        if tlauncher_path and not os.path.exists(tlauncher_path):
+            messagebox.showerror("Ошибка", f"TLauncher не найден: {tlauncher_path}")
+            return
+
+        # Автоматическое определение пути к модам на основе папки Minecraft
         mods_path = os.path.join(minecraft_path, "mods")
         os.makedirs(mods_path, exist_ok=True)
 
         # Сохранение путей
         self.minecraft_path.set(minecraft_path)
-        self.tlauncher_path.set(tlauncher_path)
+        self.tlauncher_path.set(tlauncher_path)  # Может быть пустым
         self.mods_path.set(mods_path)
 
         self.save_config()
         self.update_path_info()
-
         self.settings_btn.configure(fg_color="#1f6aa5", hover_color="#144870")
 
         window.destroy()
         self.log_success("Настройки обновлены успешно!")
-        messagebox.showinfo("Успех", "Настройки сохранены!")
+
+        if tlauncher_path:
+            messagebox.showinfo("Успех", "Настройки сохранены!\nБудет использоваться TLauncher для запуска.")
+        else:
+            messagebox.showinfo("Успех", "Настройки сохранены!\nИгра будет запускаться из указанной папки.")
+
+    def browse_minecraft_folder(self, entry_widget):
+        """Выбор папки Minecraft"""
+        folder = filedialog.askdirectory(
+            title="Выберите папку Minecraft",
+            initialdir=os.path.expanduser("~")
+        )
+        if folder:
+            # Проверяем, что это действительно папка Minecraft
+            if self.validate_minecraft_folder(folder):
+                entry_widget.delete(0, "end")
+                entry_widget.insert(0, folder)
+            else:
+                # Предлагаем создать папку .minecraft или выбрать другую
+                result = messagebox.askyesno(
+                    "Папка Minecraft не найдена",
+                    f"В папке {folder} не найдены файлы Minecraft.\n\n"
+                    "Это может быть:\n"
+                    "• Неправильная папка\n"
+                    "• Новая установка без профилей\n\n"
+                    "Использовать эту папку как папку Minecraft?",
+                    icon="question"
+                )
+                if result:
+                    entry_widget.delete(0, "end")
+                    entry_widget.insert(0, folder)
+
+    def validate_minecraft_folder(self, folder_path):
+        """Проверка, что папка содержит файлы Minecraft"""
+        if not os.path.exists(folder_path):
+            return False
+
+        # Проверяем наличие характерных файлов/папок Minecraft
+        minecraft_indicators = [
+            "launcher_profiles.json",  # Профили лаунчера
+            "versions",  # Папка с версиями
+            "libraries",  # Библиотеки
+            "assets",  # Ресурсы
+            "mods"  # Папка модов (может отсутствовать)
+        ]
+
+        # Достаточно найти хотя бы один индикатор
+        for indicator in minecraft_indicators:
+            if os.path.exists(os.path.join(folder_path, indicator)):
+                return True
+
+        return False
 
     def browse_folder(self, entry_widget, title):
         """Выбор папки"""
@@ -682,13 +765,12 @@ class MinecraftLauncher:
         if not self.all_paths_configured():
             result = messagebox.askyesno(
                 "Настройка путей",
-                "Пути к Minecraft и TLauncher не настроены.\nОткрыть настройки сейчас?",
+                "Папка Minecraft не настроена.\nОткрыть настройки сейчас?",
                 icon="question"
             )
             if result:
                 self.show_settings()
             return False
-
         return True
 
     def update_progress(self, progress):
@@ -1022,24 +1104,102 @@ class MinecraftLauncher:
         else:
             self.log_info("✅ Все моды актуальны. Запускаю игру...")
 
-        # Запуск игры
-        self.update_status("Запуск TLauncher...")
-        self.log_info("🚀 Запускаю TLauncher...")
+            # Определяем способ запуска
+            minecraft_folder = self.minecraft_path.get()
+            tlauncher_path = self.tlauncher_path.get()
 
-        try:
-            import runner
-            success = runner.launch_tlauncher()
+            try:
+                if tlauncher_path and os.path.exists(tlauncher_path):
+                    # Запуск через TLauncher
+                    self.update_status("Запуск TLauncher...")
+                    self.log_info("🚀 Запускаю игру через TLauncher...")
 
-            if success:
-                self.log_success("✅ TLauncher запущен успешно")
-                self.update_status("TLauncher запущен")
-            else:
-                self.log_error("❌ Ошибка запуска TLauncher")
+                    import runner
+                    success = runner.launch_tlauncher()
+
+                    if success:
+                        self.log_success("✅ TLauncher запущен успешно")
+                        self.update_status("TLauncher запущен")
+                    else:
+                        self.log_error("❌ Ошибка запуска TLauncher")
+                        self.update_status("Ошибка запуска")
+                else:
+                    # Запуск стандартного лаунчера из папки Minecraft
+                    self.update_status("Запуск Minecraft Launcher...")
+                    self.log_info("🚀 Запускаю стандартный лаунчер...")
+
+                    # Ищем лаунчер в папке Minecraft
+                    launcher_paths = self.find_minecraft_launcher(minecraft_folder)
+
+                    if launcher_paths:
+                        launcher_path = launcher_paths[0]  # Берем первый найденный
+                        self.log_info(f"Найден лаунчер: {os.path.basename(launcher_path)}")
+
+                        if sys.platform == "win32":
+                            subprocess.Popen([launcher_path], cwd=minecraft_folder)
+                        elif sys.platform == "darwin":  # macOS
+                            if launcher_path.endswith('.app'):
+                                subprocess.Popen(['open', launcher_path])
+                            else:
+                                subprocess.Popen(['java', '-jar', launcher_path], cwd=minecraft_folder)
+                        else:  # Linux
+                            subprocess.Popen(['java', '-jar', launcher_path], cwd=minecraft_folder)
+
+                        self.log_success("✅ Minecraft Launcher запущен успешно")
+                        self.update_status("Minecraft Launcher запущен")
+                    else:
+                        # Пытаемся запустить через команду minecraft (если установлен глобально)
+                        self.log_warning("Лаунчер не найден в папке, пытаюсь запустить minecraft...")
+                        try:
+                            subprocess.Popen(['minecraft-launcher'], cwd=minecraft_folder)
+                            self.log_success("✅ Minecraft запущен через системную команду")
+                        except FileNotFoundError:
+                            self.log_error("❌ Не найден способ запуска Minecraft из указанной папки")
+                            messagebox.showerror(
+                                "Ошибка запуска",
+                                "Не удалось найти лаунчер Minecraft в указанной папке.\n\n"
+                                "Убедитесь, что:\n"
+                                "• Указана правильная папка Minecraft\n"
+                                "• В папке есть исполняемые файлы лаунчера\n"
+                                "• Или используйте TLauncher для запуска"
+                            )
+
+            except Exception as e:
+                self.log_error(f"❌ Ошибка запуска: {e}")
                 self.update_status("Ошибка запуска")
 
-        except Exception as e:
-            self.log_error(f"❌ Ошибка запуска: {e}")
-            self.update_status("Ошибка запуска")
+    def find_minecraft_launcher(self, minecraft_folder):
+        """Поиск исполняемых файлов лаунчера в папке Minecraft"""
+        launcher_files = []
+
+        # Возможные имена лаунчеров
+        launcher_names = [
+            "MinecraftLauncher.exe",
+            "Minecraft.exe",
+            "launcher.exe",
+            "minecraft-launcher.exe",
+            "Minecraft Launcher.app",
+            "launcher.jar",
+            "minecraft.jar"
+        ]
+
+        # Ищем в основной папке
+        for launcher_name in launcher_names:
+            launcher_path = os.path.join(minecraft_folder, launcher_name)
+            if os.path.exists(launcher_path):
+                launcher_files.append(launcher_path)
+
+        # Ищем в подпапках (особенно для Windows)
+        for root, dirs, files in os.walk(minecraft_folder):
+            # Ограничиваем глубину поиска
+            if root.count(os.sep) - minecraft_folder.count(os.sep) > 2:
+                continue
+
+            for file in files:
+                if file.lower() in [name.lower() for name in launcher_names]:
+                    launcher_files.append(os.path.join(root, file))
+
+        return launcher_files
 
     def toggle_theme(self):
         """Переключение темы с обновлением иконки"""
@@ -1193,7 +1353,7 @@ class MinecraftLauncher:
         ctk.CTkLabel(filter_frame, text="Фильтр по ключевому слову:", font=ctk.CTkFont(weight="bold")).pack(anchor="w",
                                                                                                             padx=10,
                                                                                                             pady=(
-                                                                                                            10, 5))
+                                                                                                                10, 5))
         self.keyword_entry = ctk.CTkEntry(filter_frame, placeholder_text="Введите ключевое слово...")
         self.keyword_entry.pack(anchor="w", padx=20, pady=5, fill="x")
 
@@ -1248,7 +1408,7 @@ class MinecraftLauncher:
         file_path = filedialog.asksaveasfilename(
             title="Сохранить отфильтрованные логи",
             defaultextension=".txt",
-            initialfilename=default_filename,
+            initialfile=default_filename,
             filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")]
         )
 
@@ -1415,7 +1575,7 @@ class MinecraftLauncher:
         file_path = filedialog.asksaveasfilename(
             title="Сохранить логи",
             defaultextension=".txt",
-            initialfilename=default_filename,
+            initialfile=default_filename,
             filetypes=[
                 ("Текстовые файлы", "*.txt"),
                 ("Все файлы", "*.*")
