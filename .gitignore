@@ -1,3 +1,7 @@
 __pycache__
 ~/.minecraft/mods
 config.ini
+dist
+build
+logs
+mods_to_update.json
