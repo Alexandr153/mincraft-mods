@@ -1,3 +1,5 @@
+import hashlib
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -8,6 +10,9 @@ import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
+
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from mcstatus import JavaServer
 import json
 
@@ -62,6 +67,11 @@ class MinecraftLauncher:
         self.status_label = None
         self.settings_btn = None
         self.log_text = None
+        self.minecraft_settings_entry = None
+        self.filter_info = None
+        self.filter_success = None
+        self.filter_warning = None
+        self.filter_error = None
 
         # Инициализация
         self.load_config()
@@ -681,12 +691,13 @@ class MinecraftLauncher:
 
         return True
 
+    def update_progress(self, progress):
+        """Обновляет прогресс-бар на progress процентов (0-100)"""
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.set(progress / 100.0)
+
     def check_updates(self):
         """Проверка обновлений модов"""
-        # Убираем эту строку для более простой логики:
-        # if not self.validate_paths():
-        #     return
-
         if not self.all_paths_configured():
             self.log_error("Не настроены пути к файлам. Откройте настройки.")
             return
@@ -697,11 +708,153 @@ class MinecraftLauncher:
 
         def check_thread():
             try:
-                subprocess.run([sys.executable, "update.py", "check"],
-                               cwd=Path(__file__).parent, check=True)
+                # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (перенесены из update.py) ===
+
+                def get_file_hash(filepath):
+                    """Вычисление SHA256 хэша файла"""
+                    h = hashlib.sha256()
+                    with open(filepath, 'rb') as file_obj:
+                        while True:
+                            chunk = file_obj.read(65536)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+                    return h.hexdigest()
+
+                def download_file(url, dest_path):
+                    """Скачивание файла с логированием в GUI"""
+                    self.root.after(0, lambda: self.log_info(f"→ Скачиваю {os.path.basename(dest_path)}..."))
+                    response = requests.get(url, stream=True)
+                    response.raise_for_status()
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    with open(dest_path, 'wb') as file_out:
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if chunk:
+                                file_out.write(chunk)
+                    self.root.after(0, lambda: self.log_info(f"→ {os.path.basename(dest_path)} скачан."))
+
+                def get_remote_size(head_url):
+                    """Получение размера файла по URL"""
+                    try:
+                        response = requests.head(head_url, allow_redirects=True, timeout=10)
+                        return int(response.headers.get('content-length', 0))
+                    except Exception:
+                        return 0
+
+                # === КОНСТАНТЫ И ПЕРЕМЕННЫЕ ===
+                REPO = 'Alexandr153/mincraft-mods'
+                TAG = 'latest'
+                LOCAL_MODS = self.mods_path.get()  # Используем путь из GUI
+                MODLIST_URL = f'https://github.com/{REPO}/releases/download/{TAG}/modlist.txt'
+                LOCAL_MODLIST = os.path.join(LOCAL_MODS, 'modlist.txt')
+                TO_UPDATE_PATH = Path(__file__).parent / 'mods_to_update.json'
+
+                # === ОСНОВНАЯ ЛОГИКА ПРОВЕРКИ ОБНОВЛЕНИЙ ===
+
+                # 1. Скачиваем modlist.txt
+                os.makedirs(LOCAL_MODS, exist_ok=True)
+                self.root.after(0, lambda: self.log_info('Скачиваю modlist.txt...'))
+                download_file(MODLIST_URL, LOCAL_MODLIST)
+                self.root.after(0, lambda: self.log_info('modlist.txt скачан.'))
+
+                # 2. Проверяем какие моды надо обновить
+                self.root.after(0, lambda: self.log_info("Проверяю актуальность модов..."))
+                mods_info = []
+
+                with open(LOCAL_MODLIST, 'r', encoding='utf-8') as modlist_file:
+                    for modlist_line in modlist_file:
+                        parts = modlist_line.strip().split()
+                        if len(parts) < 3:
+                            continue
+                        mod_name, remote_hash, mod_url = parts
+                        local_mod_path = os.path.join(LOCAL_MODS, mod_name)
+                        mods_info.append((mod_name, remote_hash, mod_url, local_mod_path))
+
+                # 3. Параллельно считаем хэши локальных файлов
+                def check_mod_hash(mod_tuple):
+                    mod_name, remote_hash, mod_url, local_mod_path = mod_tuple
+                    if os.path.exists(local_mod_path):
+                        local_hash = get_file_hash(local_mod_path)
+                    else:
+                        local_hash = None
+                    return mod_name, remote_hash, mod_url, local_mod_path, local_hash
+
+                with ThreadPoolExecutor(max_workers=8) as hash_executor:
+                    hash_results = []
+                    total_mods = len(mods_info)
+                    completed = 0
+
+                    futures = [hash_executor.submit(check_mod_hash, mod_info) for mod_info in mods_info]
+                    for future in as_completed(futures):
+                        try:
+                            result = future.result()
+                            hash_results.append(result)
+                            completed += 1
+                            progress = int((completed / total_mods) * 50)  # 50% для проверки хэшей
+                            self.root.after(0, lambda p=progress: self.update_progress(p))
+                        except Exception as e:
+                            self.root.after(0, lambda err=str(e): self.log_error(f"Ошибка при проверке хэша: {err}"))
+
+                # 4. Получаем размеры для модов, требующих обновления
+                mods_to_update = []
+                total_bytes = 0
+
+                def get_mod_size_for_update(mod_with_hash):
+                    mod_name, remote_hash, mod_url, local_mod_path, local_hash = mod_with_hash
+                    if local_hash != remote_hash:
+                        mod_size = get_remote_size(mod_url)
+                        return mod_name, mod_url, local_mod_path, mod_size
+                    else:
+                        self.root.after(0, lambda name=mod_name: self.log_info(f"→ {name}: актуален."))
+                        return None
+
+                with ThreadPoolExecutor(max_workers=8) as size_executor:
+                    size_futures = [size_executor.submit(get_mod_size_for_update, hash_result) for hash_result in
+                                    hash_results]
+                    completed_size = 0
+
+                    for future in as_completed(size_futures):
+                        try:
+                            mod_update_info = future.result()
+                            if mod_update_info:
+                                upd_name, upd_url, upd_path, upd_size = mod_update_info
+                                mods_to_update.append({
+                                    'name': upd_name,
+                                    'url': upd_url,
+                                    'path': upd_path,
+                                    'size': upd_size
+                                })
+                                total_bytes += upd_size
+                                self.root.after(0,
+                                                lambda name=upd_name: self.log_info(f"→ {name}: требуется обновление."))
+
+                            completed_size += 1
+                            progress = 50 + int((completed_size / len(hash_results)) * 50)  # 50-100% для размеров
+                            self.root.after(0, lambda p=progress: self.update_progress(p))
+                        except Exception as e:
+                            self.root.after(0,
+                                            lambda err=str(e): self.log_error(f"Ошибка при получении размера: {err}"))
+
+                # 5. Сохраняем список на обновление
+                with open(TO_UPDATE_PATH, 'w', encoding='utf-8') as f:
+                    json.dump(mods_to_update, f, ensure_ascii=False, indent=2)
+
+                # 6. Выводим результаты
+                self.root.after(0, lambda: self.log_info(
+                    f"Проверка завершена. Модов для обновления: {len(mods_to_update)}"))
+
+                if mods_to_update:
+                    self.root.after(0, lambda: self.log_info("Доступны для обновления:"))
+                    for mod in mods_to_update:
+                        self.root.after(0, lambda name=mod['name']: self.log_info(f"  - {name}"))
+                else:
+                    self.root.after(0, lambda: self.log_info("Все моды актуальны."))
+
+                # Завершение проверки
                 self.root.after(0, lambda: self.on_check_complete())
-            except subprocess.CalledProcessError as e:
-                self.root.after(0, lambda: self.on_check_error(str(e)))
+
+            except Exception as e:
+                self.root.after(0, lambda err=str(e): self.on_check_error(err))
 
         threading.Thread(target=check_thread, daemon=True).start()
 
